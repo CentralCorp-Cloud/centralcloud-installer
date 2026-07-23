@@ -14,7 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const DefaultAPIURL = "https://cloud.centralcloud.fr"
+const DefaultAPIURL = "https://cloud.vexato.fr"
 
 type Config struct {
 	Command         string
@@ -182,10 +182,11 @@ func EnrollmentToken(c Config) ([]byte, func(), error) {
 	if path == "" {
 		if value, ok := os.LookupEnv("CENTRALCLOUD_ENROLLMENT_TOKEN"); ok {
 			_ = os.Unsetenv("CENTRALCLOUD_ENROLLMENT_TOKEN")
-			if len(value) < 32 {
-				return nil, func() {}, errors.New("enrollment token is too short")
+			token := bytes.TrimSpace([]byte(value))
+			if !validEnrollmentToken(token) {
+				return nil, func() {}, errors.New("invalid enrollment token format")
 			}
-			return []byte(value), func() {}, nil
+			return token, func() {}, nil
 		}
 	}
 	if path == "" {
@@ -208,12 +209,29 @@ func EnrollmentToken(c Config) ([]byte, func(), error) {
 	if err != nil {
 		return nil, func() {}, err
 	}
-	if len(value) < 32 || len(value) > 4096 {
-		return nil, func() {}, errors.New("invalid enrollment token length")
+	value = bytes.TrimSpace(value)
+	if !validEnrollmentToken(value) {
+		return nil, func() {}, errors.New("invalid enrollment token format")
 	}
 	cleanup := func() {}
 	if c.DeleteTokenFile {
 		cleanup = func() { _ = os.Remove(path) }
 	}
 	return value, cleanup, nil
+}
+
+func validEnrollmentToken(value []byte) bool {
+	if len(value) < 32 || len(value) > 4096 {
+		return false
+	}
+	for _, character := range value {
+		if (character >= 'a' && character <= 'z') ||
+			(character >= 'A' && character <= 'Z') ||
+			(character >= '0' && character <= '9') ||
+			character == '-' || character == '_' {
+			continue
+		}
+		return false
+	}
+	return true
 }

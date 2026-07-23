@@ -1,12 +1,9 @@
 package cli
 
 import (
-	"bytes"
 	"context"
 	"io"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -14,47 +11,21 @@ import (
 	"github.com/CentralCorp-Cloud/centralcloud-installer/internal/runner"
 )
 
-func TestPersistentTLSMaterialReusesPrivateKeyAndCSR(t *testing.T) {
-	directory := t.TempDir()
-	privateKeyPath := filepath.Join(directory, "tls", "server.key")
-	csrPath := filepath.Join(directory, "state", "node.csr")
-
-	first, err := persistentTLSMaterial(
-		"123e4567-e89b-42d3-a456-426614174000",
-		"node.example.com",
-		privateKeyPath,
-		csrPath,
-	)
+func TestAgentTokenIsReducedToAStableDigest(t *testing.T) {
+	token := strings.Repeat("s", 48)
+	first, err := agentTokenSHA256(token)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := persistentTLSMaterial(
-		"123e4567-e89b-42d3-a456-426614174000",
-		"node.example.com",
-		privateKeyPath,
-		csrPath,
-	)
+	second, err := agentTokenSHA256(token)
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	if !bytes.Equal(first.PrivateKeyPEM, second.PrivateKeyPEM) {
-		t.Fatal("private key changed during resume")
+	if first != second || len(first) != 64 || strings.Contains(first, token) {
+		t.Fatalf("unexpected token digest %q", first)
 	}
-	if !bytes.Equal(first.CSRPEM, second.CSRPEM) {
-		t.Fatal("CSR changed during resume")
-	}
-	for path, expected := range map[string]os.FileMode{
-		privateKeyPath: 0o600,
-		csrPath:        0o600,
-	} {
-		info, err := os.Stat(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if info.Mode().Perm() != expected {
-			t.Fatalf("%s permissions are %o", path, info.Mode().Perm())
-		}
+	if _, err := agentTokenSHA256("short"); err == nil {
+		t.Fatal("short Agent token accepted")
 	}
 }
 

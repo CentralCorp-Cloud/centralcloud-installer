@@ -23,6 +23,7 @@ type State struct {
 	AgentVersion          string            `json:"agent_version,omitempty"`
 	AgentProtocol         string            `json:"agent_protocol,omitempty"`
 	AgentManifestURL      string            `json:"agent_manifest_url,omitempty"`
+	AgentTokenSHA256      string            `json:"agent_token_sha256,omitempty"`
 	AllowedClientSANs     []string          `json:"allowed_client_sans,omitempty"`
 	AllowedSourceCIDRs    []string          `json:"allowed_source_cidrs,omitempty"`
 	MemoryBytes           uint64            `json:"memory_bytes,omitempty"`

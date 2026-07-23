@@ -1,8 +1,8 @@
 # CentralCloud Node Installer
 
 The installer enrolls a fresh Debian or Ubuntu server with the CentralCloud
-Dashboard, then reconciles Docker, PostgreSQL, Traefik, mTLS and the signed
-Agent release.
+Dashboard, then reconciles Docker, PostgreSQL, Traefik HTTPS, per-node Bearer
+authentication and the signed Agent release.
 
 ```sh
 curl -fsSL https://install.centralcloud.fr/node -o /tmp/centralcloud-node.sh
@@ -27,12 +27,15 @@ unknown keys are rejected and explicit CLI flags take priority.
 
 Supported hosts are Debian 12/13 and Ubuntu 22.04/24.04 on amd64 or arm64 with
 systemd. State is `/var/lib/centralcloud-installer/state.json` (`0600`). Agent
-configuration and TLS are under `/etc/centralcloud-agent`; durable Agent data,
-panels and backups are under `/var/lib/centralcloud-agent`.
+configuration and the Bearer token digest are under `/etc/centralcloud-agent`;
+durable Agent data, panels and backups are under
+`/var/lib/centralcloud-agent`. Traefik publishes the Agent on normal HTTPS 443;
+the Agent binds 9443 only on the automatically detected Traefik bridge gateway,
+and the firewall also denies that port from public networks.
 
 `uninstall` is deliberately non-destructive: it never removes panel storage,
-PostgreSQL databases, Docker volumes, Agent encrypted state, backups or TLS
-keys. `repair` replays only incomplete idempotent stages.
+PostgreSQL databases, Docker volumes, Agent encrypted state, backups or
+secrets. `repair` replays only incomplete idempotent stages.
 
 The bootstrap trusts HTTPS plus the release checksum file hosted at the same
 immutable GitHub Release. It never downloads a branch. Environments requiring

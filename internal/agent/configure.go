@@ -3,6 +3,7 @@ package agent
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,16 +14,15 @@ type Configuration struct {
 	NodeID             string
 	NodeName           string
 	FQDN               string
+	ListenAddress      string
 	PanelDomainSuffix  string
-	AllowedClientSANs  []string
-	AllowedSourceCIDRs []string
+	TokenSHA256        string
 	MaximumDeployments int
 }
 
 func Configure(c Configuration) error {
 	for path, mode := range map[string]os.FileMode{
 		"/etc/centralcloud-agent":             0o750,
-		"/etc/centralcloud-agent/tls":         0o750,
 		"/etc/centralcloud-agent/secrets":     0o750,
 		"/var/lib/centralcloud-agent":         0o700,
 		"/var/lib/centralcloud-agent/backups": 0o700,
@@ -41,6 +41,13 @@ func Configure(c Configuration) error {
 	if err := secretIfAbsent("/etc/centralcloud-agent/secrets/postgres_password", 48); err != nil {
 		return err
 	}
+	digest, err := hex.DecodeString(c.TokenSHA256)
+	if err != nil || len(digest) != 32 {
+		return fmt.Errorf("Agent bearer token SHA-256 digest is invalid")
+	}
+	if err := atomicWrite("/etc/centralcloud-agent/secrets/api_token.sha256", []byte(c.TokenSHA256+"\n"), 0o600); err != nil {
+		return err
+	}
 	maximum := c.MaximumDeployments
 	if maximum < 1 {
 		maximum = 50
@@ -49,7 +56,7 @@ func Configure(c Configuration) error {
   id: %q
   name: %q
 server:
-  address: "0.0.0.0:9443"
+  address: %q
   read_timeout: 30s
   write_timeout: 30s
   idle_timeout: 60s
@@ -58,15 +65,12 @@ server:
   rate_per_second: 10
   rate_burst: 20
 security:
-  mode: mtls
-  certificate_file: /etc/centralcloud-agent/tls/server.crt
-  private_key_file: /etc/centralcloud-agent/tls/server.key
-  client_ca_file: /etc/centralcloud-agent/tls/client-ca.crt
+  mode: bearer
+  token_sha256_file: /etc/centralcloud-agent/secrets/api_token.sha256
+  behind_reverse_proxy: true
   master_key_file: /etc/centralcloud-agent/secrets/master.key
-  allowed_client_sans:
-%s
-  allowed_source_cidrs:
-%s
+  allowed_client_sans: []
+  allowed_source_cidrs: []
   timestamp_skew: 5m
 docker:
   socket: unix:///var/run/docker.sock
@@ -102,7 +106,7 @@ storage:
   runtime_directory: /run/centralcloud-agent
   backup_directory: /var/lib/centralcloud-agent/backups
   panel_directory: /var/lib/centralcloud-agent/panels
-`, c.NodeID, c.NodeName, yamlList(c.AllowedClientSANs), yamlList(c.AllowedSourceCIDRs), firstNonEmpty(c.PanelDomainSuffix, domainSuffix(c.FQDN)), maximum)
+`, c.NodeID, c.NodeName, firstNonEmpty(c.ListenAddress, "127.0.0.1:9443"), firstNonEmpty(c.PanelDomainSuffix, domainSuffix(c.FQDN)), maximum)
 	if err := atomicWrite("/etc/centralcloud-agent/config.yaml", []byte(config), 0o640); err != nil {
 		return err
 	}

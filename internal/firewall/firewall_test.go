@@ -37,7 +37,7 @@ func TestNFTPlanSupportsIPv4AndIPv6AndIsValidatedBeforeApply(t *testing.T) {
 		t.Fatal(err)
 	}
 	rules := string(data)
-	if !strings.Contains(rules, "control_plane_v4") || !strings.Contains(rules, "control_plane_v6") {
+	if !strings.Contains(rules, "reverse_proxy_v4") || !strings.Contains(rules, "reverse_proxy_v6") {
 		t.Fatalf("missing dual-stack rules: %s", rules)
 	}
 	if len(executor.calls) != 4 ||

@@ -3,16 +3,17 @@ package cli
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
-	"time"
 
 	ccagent "github.com/CentralCorp-Cloud/centralcloud-installer/internal/agent"
 	"github.com/CentralCorp-Cloud/centralcloud-installer/internal/config"
@@ -25,7 +26,6 @@ import (
 	"github.com/CentralCorp-Cloud/centralcloud-installer/internal/release"
 	"github.com/CentralCorp-Cloud/centralcloud-installer/internal/runner"
 	"github.com/CentralCorp-Cloud/centralcloud-installer/internal/state"
-	cctls "github.com/CentralCorp-Cloud/centralcloud-installer/internal/tls"
 	"github.com/CentralCorp-Cloud/centralcloud-installer/internal/traefik"
 	"github.com/CentralCorp-Cloud/centralcloud-installer/internal/validation"
 )
@@ -86,7 +86,7 @@ func (a App) install(ctx context.Context) error {
 	current.DiskBytes = host.DiskBytes
 	a.Output("CentralCloud Node Installer v%s\n\n✓ %s %s détecté\n✓ Architecture linux/%s\n✓ %.1f GiB de mémoire\n✓ %.1f GiB de disque disponible", a.Version, host.OS, host.OSVersion, host.Architecture, float64(host.MemoryBytes)/(1<<30), float64(host.DiskBytes)/(1<<30))
 	if a.Config.DryRun {
-		a.Output("Dry-run: packages → Docker → PostgreSQL → Traefik → TLS → Agent → firewall → validation")
+		a.Output("Dry-run: packages → Docker → PostgreSQL → Traefik/HTTPS → Agent Bearer → firewall → validation")
 		return nil
 	}
 	if err := installSelf(); err != nil {
@@ -134,8 +134,14 @@ func (a App) install(ctx context.Context) error {
 		current.AgentVersion = approved.Agent.Version
 		current.AgentProtocol = approved.Agent.ProtocolVersion
 		current.AgentManifestURL = approved.Agent.ManifestURL
-		current.AllowedClientSANs = approved.Security.AllowedClientSANs
-		current.AllowedSourceCIDRs = approved.Security.AllowedSourceCIDRs
+		if approved.Agent.Authentication.Mode != "bearer" {
+			return errors.New("Dashboard did not provide valid per-node bearer authentication")
+		}
+		current.AgentTokenSHA256, err = agentTokenSHA256(approved.Agent.Authentication.Token)
+		if err != nil {
+			return err
+		}
+		approved.Agent.Authentication.Token = ""
 		current.BootstrapToken = approved.BootstrapToken
 		current.Complete("waiting_for_claim")
 		if err := store.Save(current); err != nil {
@@ -155,8 +161,7 @@ func (a App) install(ctx context.Context) error {
 	approved.Agent.Version = current.AgentVersion
 	approved.Agent.ProtocolVersion = current.AgentProtocol
 	approved.Agent.ManifestURL = current.AgentManifestURL
-	approved.Security.AllowedClientSANs = current.AllowedClientSANs
-	approved.Security.AllowedSourceCIDRs = current.AllowedSourceCIDRs
+	approved.Agent.Authentication.Mode = "bearer"
 	a.Output("Reprise de l’installation du Node %s à l’étape %s", current.NodeName, current.Step)
 	return a.provision(ctx, client, store, current, approved, host)
 }
@@ -171,7 +176,7 @@ func (a App) provision(ctx context.Context, client enrollment.Client, store stat
 		{"packages", 12, func() error { return packages.Install(ctx, a.Runner) }},
 		{"docker", 24, func() error { return ccdocker.Install(ctx, a.Runner) }},
 		{"postgresql", 36, func() error { return postgresql.Configure(ctx, a.Runner) }},
-		{"traefik", 48, func() error { return traefik.Configure(ctx, a.Runner, a.TraefikImage) }},
+		{"traefik", 48, func() error { return traefik.ConfigureAgent(ctx, a.Runner, a.TraefikImage, approved.Node.FQDN) }},
 	}
 	for index, item := range stages {
 		if current.HasCompleted(item.name) {
@@ -185,47 +190,6 @@ func (a App) provision(ctx context.Context, client enrollment.Client, store stat
 		}
 		current.Complete(item.name)
 		if err := store.Save(current); err != nil {
-			return err
-		}
-	}
-	certificate := enrollment.Certificate{AllowedClientSANs: current.AllowedClientSANs, AllowedSourceCIDRs: current.AllowedSourceCIDRs}
-	if !current.HasCompleted("tls") {
-		privateKeyPath := "/etc/centralcloud-agent/tls/server.key"
-		csrPath := filepath.Join(a.Config.StateDir, "node.csr")
-		material, err := persistentTLSMaterial(current.NodeID, approved.Node.FQDN, privateKeyPath, csrPath)
-		if err != nil {
-			return err
-		}
-		if current.CertificateRequestKey == "" {
-			current.CertificateRequestKey, err = randomUUID()
-			if err != nil {
-				return err
-			}
-			if err := store.Save(current); err != nil {
-				return err
-			}
-		}
-		certificate, err = client.Certificate(ctx, current.EnrollmentID, current.BootstrapToken, current.CertificateRequestKey, material.CSRPEM)
-		if err != nil {
-			return err
-		}
-		if err := cctls.ValidateCertificate([]byte(certificate.Certificate), []byte(certificate.Chain), material.PrivateKeyPEM, approved.Node.FQDN, time.Now()); err != nil {
-			return err
-		}
-		if err := cctls.Install("/etc/centralcloud-agent/tls/server.crt", []byte(certificate.Certificate+"\n"+certificate.Chain), 0o640); err != nil {
-			return err
-		}
-		if err := cctls.Install("/etc/centralcloud-agent/tls/client-ca.crt", []byte(certificate.ClientCA), 0o640); err != nil {
-			return err
-		}
-		current.AllowedClientSANs = certificate.AllowedClientSANs
-		current.AllowedSourceCIDRs = certificate.AllowedSourceCIDRs
-		current.CertificateRequestKey = ""
-		current.Complete("tls")
-		if err := store.Save(current); err != nil {
-			return err
-		}
-		if err := os.Remove(csrPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
 	}
@@ -256,9 +220,13 @@ func (a App) provision(ctx context.Context, client enrollment.Client, store stat
 			return err
 		}
 	}
+	proxyGateway, err := traefik.NetworkGateway(ctx, a.Runner)
+	if err != nil {
+		return err
+	}
 	if err := ccagent.Configure(ccagent.Configuration{
 		NodeID: current.NodeID, NodeName: approved.Node.Name, FQDN: approved.Node.FQDN,
-		AllowedClientSANs: certificate.AllowedClientSANs, AllowedSourceCIDRs: certificate.AllowedSourceCIDRs,
+		ListenAddress: net.JoinHostPort(proxyGateway, "9443"), TokenSHA256: current.AgentTokenSHA256,
 		PanelDomainSuffix: approved.Node.PanelDomainSuffix,
 	}); err != nil {
 		return err
@@ -267,9 +235,8 @@ func (a App) provision(ctx context.Context, client enrollment.Client, store stat
 		{"usermod", "--append", "--groups", "docker", "centralcloud-agent"},
 		{"chown", "-R", "centralcloud-agent:centralcloud-agent", "/var/lib/centralcloud-agent"},
 		{"chown", "-R", "centralcloud-agent:centralcloud-agent", "/etc/centralcloud-agent/secrets"},
-		{"chown", "root:centralcloud-agent", "/etc/centralcloud-agent", "/etc/centralcloud-agent/tls"},
-		{"chown", "centralcloud-agent:centralcloud-agent", "/etc/centralcloud-agent/tls/server.key"},
-		{"chown", "root:centralcloud-agent", "/etc/centralcloud-agent/config.yaml", "/etc/centralcloud-agent/tls/server.crt", "/etc/centralcloud-agent/tls/client-ca.crt"},
+		{"chown", "root:centralcloud-agent", "/etc/centralcloud-agent"},
+		{"chown", "root:centralcloud-agent", "/etc/centralcloud-agent/config.yaml"},
 	} {
 		if _, err := a.Runner.Run(ctx, command[0], command[1:]...); err != nil {
 			return err
@@ -278,10 +245,6 @@ func (a App) provision(ctx context.Context, client enrollment.Client, store stat
 	if _, err := a.Runner.Run(ctx, "systemctl", "daemon-reload"); err != nil {
 		return err
 	}
-	if _, err := a.Runner.Run(ctx, "systemctl", "enable", "--now", "centralcloud-agent"); err != nil {
-		return err
-	}
-	current.Complete("agent")
 	if !a.Config.SkipFirewall {
 		sshPort, err := firewall.DetectSSHPort(ctx, a.Runner, os.Getenv("SSH_CONNECTION"))
 		if err != nil {
@@ -291,7 +254,11 @@ func (a App) provision(ctx context.Context, client enrollment.Client, store stat
 		if err != nil {
 			return err
 		}
-		plan, err := firewall.Build(backend, sshPort, 9443, certificate.AllowedSourceCIDRs)
+		proxyCIDR, err := traefik.NetworkCIDR(ctx, a.Runner)
+		if err != nil {
+			return err
+		}
+		plan, err := firewall.Build(backend, sshPort, 9443, []string{proxyCIDR})
 		if err != nil {
 			return err
 		}
@@ -300,6 +267,10 @@ func (a App) provision(ctx context.Context, client enrollment.Client, store stat
 		}
 	}
 	current.Complete("firewall")
+	if _, err := a.Runner.Run(ctx, "systemctl", "enable", "--now", "centralcloud-agent"); err != nil {
+		return err
+	}
+	current.Complete("agent")
 	checks, err := validation.RunFinal(ctx, a.Runner)
 	if err != nil {
 		return err
@@ -328,42 +299,10 @@ func (a App) provision(ctx context.Context, client enrollment.Client, store stat
 		return err
 	}
 	current.BootstrapToken = ""
+	current.AgentTokenSHA256 = ""
 	current.CompletionRequestKey = ""
 	current.Complete("complete")
 	return store.Save(current)
-}
-
-func persistentTLSMaterial(nodeID, fqdn, privateKeyPath, csrPath string) (cctls.Material, error) {
-	privateKey, err := os.ReadFile(privateKeyPath)
-	switch {
-	case err == nil:
-		material, generateErr := cctls.GenerateFromPrivateKey(nodeID, fqdn, privateKey)
-		if generateErr != nil {
-			return cctls.Material{}, generateErr
-		}
-		if existingCSR, readErr := os.ReadFile(csrPath); readErr == nil {
-			material.CSRPEM = existingCSR
-		} else if !errors.Is(readErr, os.ErrNotExist) {
-			return cctls.Material{}, readErr
-		} else if installErr := cctls.Install(csrPath, material.CSRPEM, 0o600); installErr != nil {
-			return cctls.Material{}, installErr
-		}
-		return material, nil
-	case !errors.Is(err, os.ErrNotExist):
-		return cctls.Material{}, err
-	}
-
-	material, err := cctls.Generate(nodeID, fqdn)
-	if err != nil {
-		return cctls.Material{}, err
-	}
-	if err := cctls.Install(privateKeyPath, material.PrivateKeyPEM, 0o600); err != nil {
-		return cctls.Material{}, err
-	}
-	if err := cctls.Install(csrPath, material.CSRPEM, 0o600); err != nil {
-		return cctls.Material{}, err
-	}
-	return material, nil
 }
 
 func (a App) status() error {
@@ -400,7 +339,7 @@ func (a App) update(ctx context.Context) error {
 }
 
 func (a App) uninstall(ctx context.Context) error {
-	a.Log.Warn("non-destructive uninstall preserves all data, databases, volumes, backups, TLS and Agent secrets")
+	a.Log.Warn("non-destructive uninstall preserves all data, databases, volumes, backups and Agent secrets")
 	for _, command := range [][]string{{"systemctl", "disable", "--now", "centralcloud-agent"}, {"systemctl", "daemon-reload"}} {
 		if _, err := a.Runner.Run(ctx, command[0], command[1:]...); err != nil {
 			return err
@@ -415,6 +354,14 @@ func randomHex(size int) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(value), nil
+}
+
+func agentTokenSHA256(token string) (string, error) {
+	if len(token) < 32 {
+		return "", errors.New("Dashboard did not provide valid per-node bearer authentication")
+	}
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:]), nil
 }
 
 func randomUUID() (string, error) {

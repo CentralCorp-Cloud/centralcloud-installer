@@ -8,16 +8,30 @@ import (
 
 func TestTokenFilePermissionsAndDeletion(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "token")
-	if err := os.WriteFile(path, []byte("0123456789012345678901234567890123456789"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("0123456789012345678901234567890123456789\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	token, cleanup, err := EnrollmentToken(Config{TokenFile: path, DeleteTokenFile: true})
 	if err != nil || len(token) < 32 {
 		t.Fatalf("token: %v", err)
 	}
+	if string(token) != "0123456789012345678901234567890123456789" {
+		t.Fatalf("token whitespace was not normalized: %q", token)
+	}
 	cleanup()
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatal("token file was not deleted")
+	}
+}
+
+func TestEnrollmentTokenRejectsEmbeddedHeaderCharacters(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "token")
+	value := "0123456789012345678901234567890123456789\nAuthorization: injected"
+	if err := os.WriteFile(path, []byte(value), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := EnrollmentToken(Config{TokenFile: path}); err == nil {
+		t.Fatal("token containing an embedded header was accepted")
 	}
 }
 

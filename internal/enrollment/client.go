@@ -69,6 +69,10 @@ type Approved struct {
 		Channel         string `json:"channel"`
 		ProtocolVersion string `json:"protocol_version"`
 		ManifestURL     string `json:"manifest_url"`
+		Authentication  struct {
+			Mode  string `json:"mode"`
+			Token string `json:"token"`
+		} `json:"authentication"`
 	} `json:"agent"`
 	Security struct {
 		AllowedClientSANs  []string `json:"allowed_client_sans"`

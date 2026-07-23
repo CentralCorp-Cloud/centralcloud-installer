@@ -26,11 +26,11 @@ func Build(backend string, sshPort, agentPort uint16, cidrs []string) (Plan, err
 		return Plan{}, errors.New("SSH_PROTECTION_FAILED: SSH port was not detected")
 	}
 	if agentPort == 0 || len(cidrs) == 0 {
-		return Plan{}, errors.New("firewall requires Agent port and Control Plane CIDRs")
+		return Plan{}, errors.New("firewall requires Agent port and reverse-proxy network CIDRs")
 	}
 	for _, raw := range cidrs {
 		if _, err := netip.ParsePrefix(raw); err != nil {
-			return Plan{}, fmt.Errorf("invalid Control Plane CIDR %q", raw)
+			return Plan{}, fmt.Errorf("invalid reverse-proxy network CIDR %q", raw)
 		}
 	}
 	plan := Plan{Backend: backend, SSHPort: sshPort, AgentPort: agentPort, SourceCIDRs: append([]string(nil), cidrs...)}
@@ -76,12 +76,12 @@ func (p Plan) NFT() string {
 		}
 	}
 	if len(ipv4) > 0 {
-		sets = append(sets, fmt.Sprintf("  set control_plane_v4 { type ipv4_addr; flags interval; elements = { %s } }", strings.Join(ipv4, ", ")))
-		rules = append(rules, fmt.Sprintf("    tcp dport %d ip saddr @control_plane_v4 accept", p.AgentPort))
+		sets = append(sets, fmt.Sprintf("  set reverse_proxy_v4 { type ipv4_addr; flags interval; elements = { %s } }", strings.Join(ipv4, ", ")))
+		rules = append(rules, fmt.Sprintf("    tcp dport %d ip saddr @reverse_proxy_v4 accept", p.AgentPort))
 	}
 	if len(ipv6) > 0 {
-		sets = append(sets, fmt.Sprintf("  set control_plane_v6 { type ipv6_addr; flags interval; elements = { %s } }", strings.Join(ipv6, ", ")))
-		rules = append(rules, fmt.Sprintf("    tcp dport %d ip6 saddr @control_plane_v6 accept", p.AgentPort))
+		sets = append(sets, fmt.Sprintf("  set reverse_proxy_v6 { type ipv6_addr; flags interval; elements = { %s } }", strings.Join(ipv6, ", ")))
+		rules = append(rules, fmt.Sprintf("    tcp dport %d ip6 saddr @reverse_proxy_v6 accept", p.AgentPort))
 	}
 	return fmt.Sprintf(`table inet centralcloud_installer
 flush table inet centralcloud_installer

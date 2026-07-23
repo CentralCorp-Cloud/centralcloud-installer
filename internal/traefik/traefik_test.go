@@ -37,6 +37,32 @@ func TestConfigureCreatesPinnedTraefikWithPersistentACMEStorage(t *testing.T) {
 	}
 }
 
+func TestConfigureAgentCreatesHTTPSRouteWithoutPublishingAgentPort(t *testing.T) {
+	image := "traefik:v3.4.4@sha256:" + strings.Repeat("a", 64)
+	executor := &fakeRunner{failNetworkInspect: true, failContainerInspect: true}
+	directory := t.TempDir()
+
+	if err := configureAgentAt(context.Background(), executor, image, directory, "node-01.nodes.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(directory, "dynamic", "agent.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "node-01.nodes.example.com") || !strings.Contains(string(data), "host.docker.internal:9443") {
+		t.Fatalf("unexpected dynamic Agent route:\n%s", data)
+	}
+	joined := strings.Join(executor.calls, "\n")
+	for _, expected := range []string{"--publish 443:443", "--add-host host.docker.internal:host-gateway", "--providers.file.directory=/etc/traefik/dynamic"} {
+		if !strings.Contains(joined, expected) {
+			t.Fatalf("missing %q in calls:\n%s", expected, joined)
+		}
+	}
+	if strings.Contains(joined, "--publish 9443:9443") {
+		t.Fatalf("Agent port was published: %s", joined)
+	}
+}
+
 func TestConfigureDoesNotReplaceAnExistingIncompatibleContainer(t *testing.T) {
 	image := "traefik:v3.4.4@sha256:" + strings.Repeat("a", 64)
 	executor := &fakeRunner{containerImage: "traefik:v3.3@sha256:" + strings.Repeat("b", 64)}
@@ -78,11 +104,28 @@ func TestConfigureRejectsSymlinkedSensitivePaths(t *testing.T) {
 	}
 }
 
+func TestNetworkGatewayReturnsValidatedDockerGateway(t *testing.T) {
+	executor := &fakeRunner{networkGateway: "172.23.0.1\n"}
+	gateway, err := NetworkGateway(context.Background(), executor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gateway != "172.23.0.1" {
+		t.Fatalf("unexpected gateway %q", gateway)
+	}
+
+	executor.networkGateway = "not-an-address"
+	if _, err := NetworkGateway(context.Background(), executor); err == nil {
+		t.Fatal("expected invalid gateway to fail")
+	}
+}
+
 type fakeRunner struct {
 	calls                []string
 	failNetworkInspect   bool
 	failContainerInspect bool
 	containerImage       string
+	networkGateway       string
 }
 
 func (r *fakeRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
@@ -90,6 +133,9 @@ func (r *fakeRunner) Run(_ context.Context, name string, args ...string) ([]byte
 	r.calls = append(r.calls, call)
 	if call == "docker network inspect centralcloud-traefik" && r.failNetworkInspect {
 		return nil, errors.New("not found")
+	}
+	if strings.Contains(call, "{{(index .IPAM.Config 0).Gateway}}") {
+		return []byte(r.networkGateway), nil
 	}
 	if strings.HasPrefix(call, "docker inspect --format") {
 		if r.failContainerInspect {
