@@ -68,6 +68,7 @@ func TestUFWFailureRestoresRulesAndReloads(t *testing.T) {
 	}
 	executor := &recordingRunner{
 		failAt: 4,
+		output: []byte("ERROR: backend refused the rule\npassword=must-not-leak\n"),
 		hook: func(call int) {
 			if call == 3 {
 				_ = os.WriteFile(path, []byte("changed\n"), 0o600)
@@ -79,8 +80,17 @@ func TestUFWFailureRestoresRulesAndReloads(t *testing.T) {
 		{"ufw", "deny", "5432/tcp"},
 	}}
 
-	if err := applyAt(context.Background(), executor, plan, ufwDirectory, filepath.Join(directory, "nft")); err == nil {
+	err := applyAt(context.Background(), executor, plan, ufwDirectory, filepath.Join(directory, "nft"))
+	if err == nil {
 		t.Fatal("expected firewall application to fail")
+	}
+	for _, expected := range []string{"FIREWALL_APPLY_FAILED", "ufw deny 5432/tcp", "backend refused the rule", "password=[REDACTED]"} {
+		if !strings.Contains(err.Error(), expected) {
+			t.Fatalf("firewall error = %q, want %q", err, expected)
+		}
+	}
+	if strings.Contains(err.Error(), "must-not-leak") {
+		t.Fatalf("firewall error leaked a protected value: %q", err)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -99,6 +109,7 @@ type recordingRunner struct {
 	calls  [][]string
 	failAt int
 	hook   func(int)
+	output []byte
 }
 
 func (r *recordingRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
@@ -108,7 +119,7 @@ func (r *recordingRunner) Run(_ context.Context, name string, args ...string) ([
 		r.hook(call)
 	}
 	if call == r.failAt {
-		return nil, errors.New("planned failure")
+		return r.output, errors.New("planned failure")
 	}
 	return nil, nil
 }

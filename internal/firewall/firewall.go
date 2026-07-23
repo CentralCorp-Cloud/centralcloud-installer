@@ -9,7 +9,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode"
 
+	"github.com/CentralCorp-Cloud/centralcloud-installer/internal/logging"
 	"github.com/CentralCorp-Cloud/centralcloud-installer/internal/runner"
 )
 
@@ -105,8 +107,8 @@ func applyAt(ctx context.Context, executor runner.Runner, plan Plan, ufwDirector
 	case "ufw":
 		for _, command := range plan.Commands {
 			arguments := append([]string{"--dry-run"}, command[1:]...)
-			if _, err := executor.Run(ctx, "ufw", arguments...); err != nil {
-				return fmt.Errorf("validate firewall: %w", err)
+			if output, err := executor.Run(ctx, "ufw", arguments...); err != nil {
+				return fmt.Errorf("validate firewall: %w", commandError("FIREWALL_VALIDATE_FAILED", append([]string{"ufw"}, arguments...), output, err))
 			}
 		}
 		snapshots, err := snapshotFiles(filepath.Join(ufwDirectory, "user.rules"), filepath.Join(ufwDirectory, "user6.rules"))
@@ -114,16 +116,17 @@ func applyAt(ctx context.Context, executor runner.Runner, plan Plan, ufwDirector
 			return err
 		}
 		for _, command := range plan.Commands {
-			if _, err := executor.Run(ctx, command[0], command[1:]...); err != nil {
+			if output, err := executor.Run(ctx, command[0], command[1:]...); err != nil {
+				failure := commandError("FIREWALL_APPLY_FAILED", command, output, err)
 				restoreErr := restoreFiles(snapshots)
 				_, reloadErr := executor.Run(ctx, "ufw", "reload")
 				if restoreErr != nil {
-					return fmt.Errorf("apply firewall: %w (rollback: %v)", err, restoreErr)
+					return fmt.Errorf("apply firewall: %w (rollback: %v)", failure, restoreErr)
 				}
 				if reloadErr != nil {
-					return fmt.Errorf("apply firewall: %w (reload rollback: %v)", err, reloadErr)
+					return fmt.Errorf("apply firewall: %w (reload rollback: %v)", failure, reloadErr)
 				}
-				return fmt.Errorf("apply firewall: %w", err)
+				return fmt.Errorf("apply firewall: %w", failure)
 			}
 		}
 		return nil
@@ -164,6 +167,34 @@ func applyAt(ctx context.Context, executor runner.Runner, plan Plan, ufwDirector
 	default:
 		return fmt.Errorf("unsupported firewall backend %q", plan.Backend)
 	}
+}
+
+func commandError(code string, command []string, output []byte, err error) error {
+	diagnostic := safeDiagnostic(output)
+	base := fmt.Sprintf("%s: command %q failed: %v", code, strings.Join(command, " "), err)
+	if diagnostic == "" {
+		return errors.New(base)
+	}
+
+	return fmt.Errorf("%s\nDiagnostic de la commande :\n%s", base, diagnostic)
+}
+
+func safeDiagnostic(output []byte) string {
+	const maximumRunes = 4096
+
+	clean := strings.Map(func(character rune) rune {
+		if character == '\n' || character == '\t' || unicode.IsPrint(character) {
+			return character
+		}
+		return -1
+	}, string(output))
+	clean = strings.TrimSpace(logging.Redact(clean))
+	runes := []rune(clean)
+	if len(runes) > maximumRunes {
+		clean = "[sortie tronquée]\n" + string(runes[len(runes)-maximumRunes:])
+	}
+
+	return clean
 }
 
 func ensureNFTInclude(mainConfig, nftDirectory string) error {
