@@ -21,7 +21,7 @@ var (
 	commit           = "unknown"
 	buildDate        = "unknown"
 	releasePublicKey = release.DefaultPublicKey
-	traefikImage     = "traefik:v3.4.4@sha256:9b0e9d788816d722703eae57ebf8b4d52ad98e02b76f0362d5a040ef46902ef7"
+	traefikImage     = "traefik:v3.7.8@sha256:4299bbed850421258fc5448c2e0e6ad350981d4d335a68de11b92448aedbefe5"
 )
 
 func main() {
