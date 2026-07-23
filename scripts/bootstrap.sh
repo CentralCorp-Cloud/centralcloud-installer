@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-readonly INSTALLER_VERSION="${CENTRALCLOUD_INSTALLER_VERSION:-1.0.2}"
+readonly INSTALLER_VERSION="${CENTRALCLOUD_INSTALLER_VERSION:-1.0.3}"
 readonly RELEASE_BASE="${CENTRALCLOUD_INSTALLER_RELEASE_BASE:-https://github.com/CentralCorp-Cloud/centralcloud-installer/releases/download/v${INSTALLER_VERSION}}"
 
 fail() {
