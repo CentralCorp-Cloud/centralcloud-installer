@@ -135,7 +135,7 @@ func (a App) install(ctx context.Context) error {
 		current.AgentProtocol = approved.Agent.ProtocolVersion
 		current.AgentManifestURL = approved.Agent.ManifestURL
 		if approved.Agent.Authentication.Mode != "bearer" {
-			return errors.New("Dashboard did not provide valid per-node bearer authentication")
+			return errors.New("dashboard did not provide valid per-node bearer authentication")
 		}
 		current.AgentTokenSHA256, err = agentTokenSHA256(approved.Agent.Authentication.Token)
 		if err != nil {
@@ -358,7 +358,7 @@ func randomHex(size int) (string, error) {
 
 func agentTokenSHA256(token string) (string, error) {
 	if len(token) < 32 {
-		return "", errors.New("Dashboard did not provide valid per-node bearer authentication")
+		return "", errors.New("dashboard did not provide valid per-node bearer authentication")
 	}
 	sum := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(sum[:]), nil

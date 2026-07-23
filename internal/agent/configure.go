@@ -43,7 +43,7 @@ func Configure(c Configuration) error {
 	}
 	digest, err := hex.DecodeString(c.TokenSHA256)
 	if err != nil || len(digest) != 32 {
-		return fmt.Errorf("Agent bearer token SHA-256 digest is invalid")
+		return fmt.Errorf("agent bearer token SHA-256 digest is invalid")
 	}
 	if err := atomicWrite("/etc/centralcloud-agent/secrets/api_token.sha256", []byte(c.TokenSHA256+"\n"), 0o600); err != nil {
 		return err
@@ -156,17 +156,6 @@ func atomicWrite(path string, value []byte, mode os.FileMode) error {
 		return err
 	}
 	return os.Rename(name, path)
-}
-
-func yamlList(values []string) string {
-	if len(values) == 0 {
-		return "    []"
-	}
-	var lines []string
-	for _, value := range values {
-		lines = append(lines, fmt.Sprintf("    - %q", value))
-	}
-	return strings.Join(lines, "\n")
 }
 
 func domainSuffix(fqdn string) string {

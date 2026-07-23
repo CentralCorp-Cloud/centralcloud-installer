@@ -30,7 +30,7 @@ func configureAgentAt(ctx context.Context, r runner.Runner, image, dataDirectory
 		return errors.New("traefik image must be pinned by digest")
 	}
 	if fqdn != "" && !hostnameRE.MatchString(strings.ToLower(fqdn)) {
-		return errors.New("Agent FQDN is invalid")
+		return errors.New("agent FQDN is invalid")
 	}
 	if info, err := os.Lstat(dataDirectory); err == nil {
 		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
@@ -148,7 +148,7 @@ func NetworkCIDR(ctx context.Context, r runner.Runner) (string, error) {
 	}
 	cidr := strings.TrimSpace(string(output))
 	if cidr == "" {
-		return "", errors.New("Traefik network has no subnet")
+		return "", errors.New("traefik network has no subnet")
 	}
 	return cidr, nil
 }
@@ -160,10 +160,10 @@ func NetworkGateway(ctx context.Context, r runner.Runner) (string, error) {
 	}
 	gateway := strings.TrimSpace(string(output))
 	if gateway == "" {
-		return "", errors.New("Traefik network has no gateway")
+		return "", errors.New("traefik network has no gateway")
 	}
 	if _, err := netip.ParseAddr(gateway); err != nil {
-		return "", errors.New("Traefik network gateway is not a valid IP address")
+		return "", errors.New("traefik network gateway is not a valid IP address")
 	}
 	return gateway, nil
 }
