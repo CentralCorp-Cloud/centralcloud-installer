@@ -17,6 +17,7 @@ func Install(ctx context.Context, r runner.Runner) error {
 		{"apt-get", "install", "-y", "--no-install-recommends", "ca-certificates", "curl", "gnupg", "jq", "nftables", "ufw"},
 		{"install", "-m", "0755", "-d", "/etc/apt/keyrings"},
 		{"curl", "-fsSL", "https://www.postgresql.org/media/keys/ACCC4CF8.asc", "-o", "/etc/apt/keyrings/postgresql.asc"},
+		{"chmod", "0644", "/etc/apt/keyrings/postgresql.asc"},
 	}
 	for _, command := range commands {
 		if err := run(ctx, r, command); err != nil {

@@ -39,6 +39,28 @@ func TestInstallReturnsRedactedCommandDiagnostic(t *testing.T) {
 	}
 }
 
+func TestInstallMakesPostgreSQLKeyReadableByAPT(t *testing.T) {
+	fake := &runner.Fake{
+		Errors: map[string]error{
+			"chmod": errors.New("stop after key permissions"),
+		},
+	}
+
+	err := Install(context.Background(), fake)
+	if err == nil {
+		t.Fatal("Install() error = nil, want controlled failure")
+	}
+
+	want := []string{"chmod", "0644", "/etc/apt/keyrings/postgresql.asc"}
+	if len(fake.Calls) != 5 {
+		t.Fatalf("Install() calls = %#v, want five calls through chmod", fake.Calls)
+	}
+	got := fake.Calls[4]
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("PostgreSQL key permission command = %#v, want %#v", got, want)
+	}
+}
+
 func TestSafeDiagnosticRemovesControlCharactersAndTruncates(t *testing.T) {
 	diagnostic := safeDiagnostic([]byte("\x00" + strings.Repeat("a", 5000)))
 
