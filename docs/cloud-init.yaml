@@ -1,0 +1,11 @@
+#cloud-config
+write_files:
+  - path: /run/secrets/centralcloud-enrollment-token
+    owner: root:root
+    permissions: "0600"
+    content: |
+      REPLACE_WITH_ONE_TIME_TOKEN
+runcmd:
+  - [curl, -fsSL, https://install.centralcloud.fr/node, -o, /tmp/centralcloud-node.sh]
+  - [bash, /tmp/centralcloud-node.sh, --non-interactive, --token-file, /run/secrets/centralcloud-enrollment-token, --delete-token-file]
+  - [rm, -f, /tmp/centralcloud-node.sh]
