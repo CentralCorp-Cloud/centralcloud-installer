@@ -1,3 +1,3 @@
 package release
 
-const DefaultPublicKey = "JjCfyCyK4lTomQp9Na34bUelemuWAud2xUx+M0yRYI8="
+const DefaultPublicKey = "YUk3CVJrrsyIO5bb6v9ji9u0ORnHpHNSYBRk/0uelh8="
