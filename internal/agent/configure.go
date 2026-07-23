@@ -116,7 +116,11 @@ storage:
 func secretIfAbsent(path string, bytes int) error {
 	if info, err := os.Lstat(path); err == nil {
 		if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
-			return fmt.Errorf("unsafe existing secret %s", path)
+			return fmt.Errorf(
+				"AGENT_SECRET_UNSAFE: protected file %q must be regular and inaccessible to group/others (current mode %s)",
+				path,
+				info.Mode(),
+			)
 		}
 		return nil
 	} else if !os.IsNotExist(err) {
